@@ -26,7 +26,7 @@
 %% ------------------------------------------------------------------
 
 start_link(ClientSock, Config) ->
-  gen_server:start_link({local, ?SERVER}, ?MODULE, [ClientSock, Config], []).
+  gen_server:start_link(?MODULE, [ClientSock, Config], []).
 
 %% ------------------------------------------------------------------
 %% gen_server Function Definitions
