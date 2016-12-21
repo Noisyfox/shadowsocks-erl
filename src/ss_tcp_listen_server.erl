@@ -43,7 +43,14 @@ handle_cast(_Msg, State) ->
 handle_info(timeout, #state{lsock = LSock, config = Config} = State) ->
   {ok, ClientSocket} = gen_tcp:accept(LSock),
 
-  ss_tcp_relay_sup:start_relay(ClientSocket, Config), % TODO: handle return
+  Pid =
+  case ss_tcp_relay_sup:start_relay(ClientSocket, Config) of
+    {ok, undefined} -> undefined;
+    {ok, undefined, _} -> undefined;
+    {ok, P} -> P;
+    {ok, P, _} -> P
+  end, % TODO: handle return
+  gen_tcp:controlling_process(ClientSocket, Pid),
 
   {noreply, State, 0}.
 
