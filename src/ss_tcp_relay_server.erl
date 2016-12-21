@@ -96,6 +96,28 @@ handle_info(timeout, #state{from_stage = init, client_sock = ClientSocket} = Sta
 handle_info(timeout, State) ->
   {noreply, State};
 
+%% Receive from client
+handle_info({tcp, ClientSocket, Data}, #state{client_sock = ClientSocket} = State) ->
+  io:format("Recv from client: ~w~n", [Data]),
+  inet:setopts(ClientSocket, [{active, once}]),
+  {noreply, State};
+
+%% Receive from target
+handle_info({tcp, TargetSocket, Data}, #state{target_sock = TargetSocket} = State) ->
+  io:format("Recv from target: ~w~n", [Data]),
+  inet:setopts(TargetSocket, [{active, once}]),
+  {noreply, State};
+
+%% Client socket closed
+handle_info({tcp_closed, ClientSocket}, #state{client_sock = ClientSocket} = State) ->
+  io:format("Client socket closed~n", []),
+  {noreply, State};
+
+%% Target socket closed
+handle_info({tcp_closed, TargetSocket}, #state{target_sock = TargetSocket} = State) ->
+  io:format("Target socket closed~n", []),
+  {noreply, State};
+
 handle_info(Info, #state{client_sock = ClientSocket} = State) ->
   io:format("~w", [Info]),
   inet:setopts(ClientSocket, [{active, once}]),
