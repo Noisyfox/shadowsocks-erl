@@ -9,16 +9,16 @@
 -module(gen_obfs).
 -author("Noisyfox").
 
-%% API
--export([behaviour_info/1]).
+-callback init() -> {ok, State :: term()} | {error, Reason :: term()}.
 
-behaviour_info(callbacks) ->
-  % Side :: client OR server
-  % Remain Data :: bytes() OR empty
-  [{init, 2}, % ? -> State
-    {close, 1}, % State -> {ok} or {error, Reason}
-    {obfuscate, 3}, % Side, Data, State -> {ok, New Data, Remain Data, New State} OR {error, Reason, New State} OR {more, Length, New State}
-    {clarify, 3} % Side, Data, State -> {ok, New Data, Remain Data, New State} OR {error, Reason, New State} OR {more, Length, New State}
-  ];
-behaviour_info(_) ->
-  undefined.
+-callback close(State :: term()) -> {ok} | {error, Reason :: term()}.
+
+-callback obfuscate(Side :: client | server, Data :: binary(), State :: term()) ->
+  {ok, NewData :: binary(), RemainData :: binary() | empty, NewState :: term()}|
+  {error, Reason :: term(), NewState :: term()}|
+  {more, Length :: non_neg_integer(), NewState :: term()}.
+
+-callback clarify(Side :: client | server, Data :: binary(), State :: term()) ->
+  {ok, NewData :: binary(), RemainData :: binary() | empty, NewState :: term()}|
+  {error, Reason :: term(), NewState :: term()}|
+  {more, Length :: non_neg_integer(), NewState :: term()}.
