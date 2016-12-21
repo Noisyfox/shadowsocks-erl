@@ -2,10 +2,39 @@
 -behaviour(gen_server).
 -define(SERVER, ?MODULE).
 
+-define(TIMEOUT, 10000).
+
+-record(net_buffer, {
+  remain_obfs = <<>>,
+  remain_cipher = <<>>,
+  remain_protocol = <<>>,
+  remain_proxy = <<>>,
+
+  require_obfs = infinity,
+  require_cipher = infinity,
+  require_protocol = infinity,
+  require_proxy = infinity
+}).
+
 -record(state, {
   config,
+
   client_sock,
-  target_sock = undefined
+  target_sock = undefined,
+
+  from_stage = init, % from_stage = init | obfs | cipher | protocol | proxy
+  to_stage = init, % to_stage = init | obfs | cipher | protocol | proxy
+
+  module_obfs = obfs_plain,
+  module_cipher = cipher_aes,
+  module_protocol = protocol_plain,
+
+  state_obfs,
+  state_cipher,
+  state_protocol,
+
+  buffer_from = #net_buffer{},
+  buffer_to = #net_buffer{}
 }).
 
 %% ------------------------------------------------------------------
@@ -41,10 +70,35 @@ handle_call(_Request, _From, State) ->
 handle_cast(_Msg, State) ->
   {noreply, State}.
 
+% init trigger
+handle_info(timeout, #state{from_stage = init, client_sock = ClientSocket} = State) ->
+
+  #state{
+    module_cipher = ModuleCipher,
+    module_obfs = ModuleObfs,
+    module_protocol = ModuleProtocol
+  } = State,
+
+  {ok, ObfsState} = ModuleCipher:init(),
+  {ok, CipherState} = ModuleObfs:init(),
+  {ok, ProtocolState} = ModuleProtocol:init(),
+
+  inet:setopts(ClientSocket, [{active, once}]),
+
+  {noreply, State#state{
+    from_stage = obfs,
+    state_obfs = ObfsState,
+    state_cipher = CipherState,
+    state_protocol = ProtocolState
+  }, ?TIMEOUT};
+
+% real time out
 handle_info(timeout, State) ->
   {noreply, State};
 
-handle_info(_Info, State) ->
+handle_info(Info, #state{client_sock = ClientSocket} = State) ->
+  io:format("~w", [Info]),
+  inet:setopts(ClientSocket, [{active, once}]),
   {noreply, State}.
 
 terminate(_Reason, _State) ->
@@ -57,3 +111,9 @@ code_change(_OldVsn, State, _Extra) ->
 %% Internal Function Definitions
 %% ------------------------------------------------------------------
 
+
+next_stage(init) -> obfs;
+next_stage(obfs) -> cipher;
+next_stage(cipher) -> protocol;
+next_stage(protocol) -> proxy;
+next_stage(proxy) -> proxy.
