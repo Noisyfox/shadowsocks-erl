@@ -5,15 +5,14 @@
 -define(TIMEOUT, 10000).
 
 -record(net_buffer, {
-  remain_obfs = <<>>,
-  remain_cipher = <<>>,
-  remain_protocol = <<>>,
-  remain_proxy = <<>>,
+  remain = empty,
+  require = infinity
+}).
 
-  require_obfs = infinity,
-  require_cipher = infinity,
-  require_protocol = infinity,
-  require_proxy = infinity
+-record(stage_state, {
+  state,
+  buffer_from = #net_buffer{},
+  buffer_to = #net_buffer {}
 }).
 
 -record(state, {
@@ -22,19 +21,16 @@
   client_sock,
   target_sock = undefined,
 
-  from_stage = init, % from_stage = init | obfs | cipher | protocol | proxy
-  to_stage = init, % to_stage = init | obfs | cipher | protocol | proxy
+  from_stage = init, % from_stage = init | obfs | cipher | protocol | proxy | closed
+  to_stage = init, % to_stage = init | obfs | cipher | protocol | proxy | closed
 
   module_obfs = obfs_plain,
   module_cipher = cipher_aes,
   module_protocol = protocol_plain,
 
-  state_obfs,
-  state_cipher,
-  state_protocol,
-
-  buffer_from = #net_buffer{},
-  buffer_to = #net_buffer{}
+  stage_obfs = #stage_state{},
+  stage_cipher = #stage_state{},
+  stage_protocol = #stage_state{}
 }).
 
 %% ------------------------------------------------------------------
@@ -76,7 +72,10 @@ handle_info(timeout, #state{from_stage = init, client_sock = ClientSocket} = Sta
   #state{
     module_cipher = ModuleCipher,
     module_obfs = ModuleObfs,
-    module_protocol = ModuleProtocol
+    module_protocol = ModuleProtocol,
+    stage_cipher = StageCipher,
+    stage_obfs = StageObfs,
+    stage_protocol = StageProtocol
   } = State,
 
   {ok, ObfsState} = ModuleCipher:init(server),
@@ -87,9 +86,9 @@ handle_info(timeout, #state{from_stage = init, client_sock = ClientSocket} = Sta
 
   {noreply, State#state{
     from_stage = obfs,
-    state_obfs = ObfsState,
-    state_cipher = CipherState,
-    state_protocol = ProtocolState
+    stage_obfs = StageObfs#stage_state{state = ObfsState},
+    stage_cipher = StageCipher#stage_state{state = CipherState},
+    stage_protocol = StageProtocol#stage_state{state = ProtocolState}
   }, ?TIMEOUT};
 
 % real time out
@@ -99,14 +98,42 @@ handle_info(timeout, State) ->
 %% Receive from client
 handle_info({tcp, ClientSocket, Data}, #state{client_sock = ClientSocket} = State) ->
   io:format("Recv from client: ~w~n", [Data]),
-  inet:setopts(ClientSocket, [{active, once}]),
-  {noreply, State};
+
+  Result = run_stage(Data, from, State),
+
+  io:format("Result: ~w~n", [Result]),
+
+  case Result of
+    {ok, _ProxyData, NewState} ->
+      % TODO: handle proxy data
+      inet:setopts(ClientSocket, [{active, once}]),
+      {noreply, NewState};
+    {more, NewState} ->
+      inet:setopts(ClientSocket, [{active, once}]),
+      {noreply, NewState};
+    {error, _Reason, NewState} ->
+      {noreply, NewState}
+  end;
 
 %% Receive from target
 handle_info({tcp, TargetSocket, Data}, #state{target_sock = TargetSocket} = State) ->
   io:format("Recv from target: ~w~n", [Data]),
-  inet:setopts(TargetSocket, [{active, once}]),
-  {noreply, State};
+
+  Result = run_stage(Data, to, State),
+
+  io:format("Result: ~w~n", [Result]),
+
+  case Result of
+    {ok, _ReplyData, NewState} ->
+      % TODO: handle reply data
+      inet:setopts(TargetSocket, [{active, once}]),
+      {noreply, NewState};
+    {more, NewState} ->
+      inet:setopts(TargetSocket, [{active, once}]),
+      {noreply, NewState};
+    {error, _Reason, NewState} ->
+      {noreply, NewState}
+  end;
 
 %% Client socket closed
 handle_info({tcp_closed, ClientSocket}, #state{client_sock = ClientSocket} = State) ->
@@ -133,9 +160,87 @@ code_change(_OldVsn, State, _Extra) ->
 %% Internal Function Definitions
 %% ------------------------------------------------------------------
 
+build_input(#net_buffer{remain = empty, require = _Require}, NewData) ->
+  NewData;
+build_input(#net_buffer{remain = RemainData, require = _Require}, NewData) ->
+  <<RemainData/binary, NewData/binary>>.
 
-next_stage(init) -> obfs;
-next_stage(obfs) -> cipher;
-next_stage(cipher) -> protocol;
-next_stage(protocol) -> proxy;
-next_stage(proxy) -> proxy.
+stage_func(obfs, from) -> obfuscate;
+stage_func(obfs, to) -> clarify;
+stage_func(cipher, from) -> encrypt;
+stage_func(cipher, to) -> decrypt;
+stage_func(protocol, from) -> encapsule;
+stage_func(protocol, to) -> decapsule.
+
+next_stage(obfs, from) -> cipher;
+next_stage(obfs, to) -> fin;
+next_stage(cipher, from) -> protocol;
+next_stage(cipher, to) -> obfs;
+next_stage(protocol, from) -> fin;
+next_stage(protocol, to) -> cipher.
+
+run_stage(NewData, from, State) ->
+  run_stage(obfs, NewData, from, State);
+run_stage(NewData, to, State) ->
+  run_stage(protocol, NewData, to, State).
+
+run_stage(fin, NewData, _, State) ->
+  {ok, NewData, State};
+run_stage(obfs = Stage, NewData, Direction, #state{module_obfs = Module, stage_obfs = StageState} = State) ->
+  case run_stage(Module, stage_func(Stage, Direction), NewData, Direction, StageState) of
+    {ok, OutData, NewStageState} ->
+      run_stage(next_stage(Stage, Direction), OutData, Direction, State#state{stage_obfs = NewStageState});
+    {more, NewStageState} ->
+      {more, State#state{stage_obfs = NewStageState}};
+    {error, Reason, NewStageState} ->
+      {error, Reason, State#state{stage_obfs = NewStageState}}
+  end;
+run_stage(cipher = Stage, NewData, Direction, #state{module_cipher = Module, stage_cipher = StageState} = State) ->
+  case run_stage(Module, stage_func(Stage, Direction), NewData, Direction, StageState) of
+    {ok, OutData, NewStageState} ->
+      run_stage(next_stage(Stage, Direction), OutData, Direction, State#state{stage_cipher = NewStageState});
+    {more, NewStageState} ->
+      {more, State#state{stage_cipher = NewStageState}};
+    {error, Reason, NewStageState} ->
+      {error, Reason, State#state{stage_cipher = NewStageState}}
+  end;
+run_stage(protocol = Stage, NewData, Direction, #state{module_protocol = Module, stage_protocol = StageState} = State) ->
+  case run_stage(Module, stage_func(Stage, Direction), NewData, Direction, StageState) of
+    {ok, OutData, NewStageState} ->
+      run_stage(next_stage(Stage, Direction), OutData, Direction, State#state{stage_protocol = NewStageState});
+    {more, NewStageState} ->
+      {more, State#state{stage_protocol = NewStageState}};
+    {error, Reason, NewStageState} ->
+      {error, Reason, State#state{stage_protocol = NewStageState}}
+  end.
+
+run_stage(Module, Function, NewData, from, #stage_state{state = State, buffer_from = NetBuffer}=StageState) ->
+  case run_stage2(Module, Function, NewData, NetBuffer, State) of
+    {ok, OutData, NewNetBuffer, NewState}->
+      {ok, OutData, StageState#stage_state{state = NewState, buffer_from = NewNetBuffer}};
+    {more, NewNetBuffer, NewState}->
+      {more, StageState#stage_state{state = NewState, buffer_from = NewNetBuffer}};
+    {error, Reason, NewState} ->
+      {error, Reason, StageState#stage_state{state = NewState}}
+  end;
+run_stage(Module, Function, NewData, to, #stage_state{state = State, buffer_to = NetBuffer}=StageState) ->
+  case run_stage2(Module, Function, NewData, NetBuffer, State) of
+    {ok, OutData, NewNetBuffer, NewState}->
+      {ok, OutData, StageState#stage_state{state = NewState, buffer_to = NewNetBuffer}};
+    {more, NewNetBuffer, NewState}->
+      {more, StageState#stage_state{state = NewState, buffer_to = NewNetBuffer}};
+    {error, Reason, NewState} ->
+      {error, Reason, StageState#stage_state{state = NewState}}
+  end.
+
+run_stage2(Module, Function, NewData, NetBuffer, State) ->
+  InData = build_input(NetBuffer, NewData),
+
+  case Module:Function(server, InData, State) of
+    {ok, OutData, RemainData, NewState} ->
+      {ok, OutData, #net_buffer{remain = RemainData, require = infinity}, NewState};
+    {more, Length, NewState} ->
+      {more, #net_buffer{remain = InData, require = Length}, NewState};
+    {error, _, _} = Result ->
+      Result
+  end.
