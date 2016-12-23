@@ -12,7 +12,7 @@
 -record(stage_state, {
   state,
   buffer_from = #net_buffer{},
-  buffer_to = #net_buffer {}
+  buffer_to = #net_buffer{}
 }).
 
 -record(state, {
@@ -216,20 +216,20 @@ run_stage(protocol = Stage, NewData, Direction, #state{module_protocol = Module,
       {error, Reason, State#state{stage_protocol = NewStageState}}
   end.
 
-run_stage(Module, Function, NewData, from, #stage_state{state = State, buffer_from = NetBuffer}=StageState) ->
+run_stage(Module, Function, NewData, from, #stage_state{state = State, buffer_from = NetBuffer} = StageState) ->
   case run_stage2(Module, Function, NewData, NetBuffer, State) of
-    {ok, OutData, NewNetBuffer, NewState}->
+    {ok, OutData, NewNetBuffer, NewState} ->
       {ok, OutData, StageState#stage_state{state = NewState, buffer_from = NewNetBuffer}};
-    {more, NewNetBuffer, NewState}->
+    {more, NewNetBuffer, NewState} ->
       {more, StageState#stage_state{state = NewState, buffer_from = NewNetBuffer}};
     {error, Reason, NewState} ->
       {error, Reason, StageState#stage_state{state = NewState}}
   end;
-run_stage(Module, Function, NewData, to, #stage_state{state = State, buffer_to = NetBuffer}=StageState) ->
+run_stage(Module, Function, NewData, to, #stage_state{state = State, buffer_to = NetBuffer} = StageState) ->
   case run_stage2(Module, Function, NewData, NetBuffer, State) of
-    {ok, OutData, NewNetBuffer, NewState}->
+    {ok, OutData, NewNetBuffer, NewState} ->
       {ok, OutData, StageState#stage_state{state = NewState, buffer_to = NewNetBuffer}};
-    {more, NewNetBuffer, NewState}->
+    {more, NewNetBuffer, NewState} ->
       {more, StageState#stage_state{state = NewState, buffer_to = NewNetBuffer}};
     {error, Reason, NewState} ->
       {error, Reason, StageState#stage_state{state = NewState}}
