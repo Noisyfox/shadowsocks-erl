@@ -21,8 +21,8 @@ init(_Side) ->
 close(_Side, _State) ->
   {ok}.
 
-encrypt(Side, Data, State) ->
-  erlang:error(not_implemented).
+encrypt(_Side, Data, State) ->
+  {ok, Data, empty, State}.
 
-decrypt(Side, Data, State) ->
-  erlang:error(not_implemented).
+decrypt(_Side, Data, State) ->
+  {ok, Data, empty, State}.
