@@ -104,10 +104,11 @@ handle_info({tcp, ClientSocket, Data}, #state{client_sock = ClientSocket} = Stat
   io:format("Result: ~w~n", [Result]),
 
   case Result of
-    {ok, _ProxyData, NewState} ->
-      % TODO: handle proxy data
+    {ok, ProxyData, NewState} ->
+      {ok, ReturnState} = handle_proxy_send(ProxyData, NewState),
+
       inet:setopts(ClientSocket, [{active, once}]),
-      {noreply, NewState};
+      {noreply, ReturnState};
     {more, NewState} ->
       inet:setopts(ClientSocket, [{active, once}]),
       {noreply, NewState};
@@ -124,10 +125,11 @@ handle_info({tcp, TargetSocket, Data}, #state{target_sock = TargetSocket} = Stat
   io:format("Result: ~w~n", [Result]),
 
   case Result of
-    {ok, _ReplyData, NewState} ->
-      % TODO: handle reply data
+    {ok, ReplyData, NewState} ->
+      {ok, ReplyState} = handle_reply(ReplyData, NewState),
+
       inet:setopts(TargetSocket, [{active, once}]),
-      {noreply, NewState};
+      {noreply, ReplyState};
     {more, NewState} ->
       inet:setopts(TargetSocket, [{active, once}]),
       {noreply, NewState};
@@ -244,3 +246,26 @@ run_stage2(Module, Function, NewData, NetBuffer, State) ->
     {error, _, _} = Result ->
       Result
   end.
+
+handle_proxy_send(Data, #state{target_sock = undefined} = State) ->
+  {Addr, Port, Remaining} = parse_address(Data),
+
+  OptsTCP = [binary, {active, once}, {nodelay, true}, {packet, raw}],
+
+  {ok, Socket} = gen_tcp:connect(Addr, Port, OptsTCP),
+
+  handle_proxy_send(Remaining, State#state{target_sock = Socket});
+handle_proxy_send(Data, #state{target_sock = TargetSock} = State) ->
+  ok = gen_tcp:send(TargetSock, Data),
+  {ok, State}.
+
+handle_reply(Data, #state{client_sock = Socket} = State) ->
+  ok = gen_tcp:send(Socket, Data),
+  {ok, State}.
+
+parse_address(<<1, Addr:4/bytes, Port:16/unsigned, Remaining/bytes>>) -> % ATYP = 1
+  {binary_utils:bin_to_ipv4(Addr), Port, Remaining};
+parse_address(<<3, Len/unsigned, Addr:(Len)/bytes, Port:16/unsigned, Remaining/bytes>>) -> % ATYP = 3
+  {binary_to_list(Addr), Port, Remaining};
+parse_address(<<4, Addr:16/bytes, Port:16/unsigned, Remaining/bytes>>) -> % ATYP = 4
+  {binary_utils:bin_to_ipv6(Addr), Port, Remaining}.
