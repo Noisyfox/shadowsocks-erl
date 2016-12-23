@@ -12,13 +12,13 @@
 -behavior(gen_cipher).
 
 %% API
--export([init/0, close/1, encrypt/3, decrypt/3]).
+-export([init/1, close/2, encrypt/3, decrypt/3]).
 
 
-init() ->
+init(_Side) ->
   {ok, {}}.
 
-close(State) ->
+close(_Side, _State) ->
   {ok}.
 
 encrypt(Side, Data, State) ->

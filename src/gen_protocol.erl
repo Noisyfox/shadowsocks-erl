@@ -9,9 +9,9 @@
 -module(gen_protocol).
 -author("Noisyfox").
 
--callback init() -> {ok, State :: term()} | {error, Reason :: term()}.
+-callback init(Side :: client | server) -> {ok, State :: term()} | {error, Reason :: term()}.
 
--callback close(State :: term()) -> {ok} | {error, Reason :: term()}.
+-callback close(Side :: client | server, State :: term()) -> {ok} | {error, Reason :: term()}.
 
 -callback encapsule(Side :: client | server, Data :: binary(), State :: term()) ->
   {ok, NewData :: binary(), RemainData :: binary() | empty, NewState :: term()}|

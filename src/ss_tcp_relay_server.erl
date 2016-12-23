@@ -79,9 +79,9 @@ handle_info(timeout, #state{from_stage = init, client_sock = ClientSocket} = Sta
     module_protocol = ModuleProtocol
   } = State,
 
-  {ok, ObfsState} = ModuleCipher:init(),
-  {ok, CipherState} = ModuleObfs:init(),
-  {ok, ProtocolState} = ModuleProtocol:init(),
+  {ok, ObfsState} = ModuleCipher:init(server),
+  {ok, CipherState} = ModuleObfs:init(server),
+  {ok, ProtocolState} = ModuleProtocol:init(server),
 
   inet:setopts(ClientSocket, [{active, once}]),
 

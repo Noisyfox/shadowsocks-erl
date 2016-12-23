@@ -12,13 +12,13 @@
 -behavior(gen_protocol).
 
 %% API
--export([init/0, close/1, encapsule/3, decapsule/3]).
+-export([init/1, close/2, encapsule/3, decapsule/3]).
 
 
-init() ->
+init(_Side) ->
   {ok, {}}.
 
-close(_State) ->
+close(_Side, _State) ->
   {ok}.
 
 encapsule(_Side, Data, State) ->

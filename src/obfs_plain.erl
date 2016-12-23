@@ -12,13 +12,13 @@
 -behaviour(gen_obfs).
 
 %% API
--export([init/0, close/1, obfuscate/3, clarify/3]).
+-export([init/1, close/2, obfuscate/3, clarify/3]).
 
 
-init() ->
+init(_Side) ->
   {ok, {}}.
 
-close(_State) ->
+close(_Side, _State) ->
   {ok}.
 
 obfuscate(_Side, Data, State) ->
