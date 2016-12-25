@@ -166,12 +166,12 @@ build_input(#net_buffer{remain = empty, require = _Require}, NewData) ->
 build_input(#net_buffer{remain = RemainData, require = _Require}, NewData) ->
   <<RemainData/binary, NewData/binary>>.
 
-stage_func(obfs, from) -> obfuscate;
-stage_func(obfs, to) -> clarify;
-stage_func(cipher, from) -> encrypt;
-stage_func(cipher, to) -> decrypt;
-stage_func(protocol, from) -> encapsule;
-stage_func(protocol, to) -> decapsule.
+stage_func(obfs, from) -> clarify;
+stage_func(obfs, to) -> obfuscate;
+stage_func(cipher, from) -> decrypt;
+stage_func(cipher, to) -> encrypt;
+stage_func(protocol, from) -> decapsule;
+stage_func(protocol, to) -> encapsule.
 
 next_stage(obfs, from) -> cipher;
 next_stage(obfs, to) -> fin;
