@@ -30,7 +30,7 @@
 
 init_context(Cipher, Type, BlockSize, Key, IV)
   when ((Type =:= encrypt) or (Type =:= decrypt))
-  and is_integer(BlockSize) and (BlockSize > 0) and is_binary(IV) and (bit_size(IV) =:= BlockSize) and is_bitstring(Key) ->
+  and is_integer(BlockSize) and (BlockSize > 0) and is_binary(IV) and (bit_size(IV) =:= BlockSize) ->
   #cfb_context{cipher = Cipher, type = Type, block_size = BlockSize, iv = IV, key = Key}.
 
 cipher_update(Context, Input) ->
