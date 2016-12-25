@@ -4,3 +4,4 @@ ebin/
 out/
 *.iml
 sserl/shadowsocks/
+.eunit/

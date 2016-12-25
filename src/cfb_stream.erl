@@ -9,6 +9,8 @@
 -module(cfb_stream).
 -author("Noisyfox").
 
+-include_lib("eunit/include/eunit.hrl").
+
 -record(cfb_context, {
   type,
   cipher,
@@ -22,6 +24,9 @@
 %% API
 -export([init_context/5, cipher_update/2]).
 
+%%%===================================================================
+%%% API functions
+%%%===================================================================
 
 init_context(Cipher, Type, BlockSize, Key, IV)
   when ((Type =:= encrypt) or (Type =:= decrypt))
@@ -35,9 +40,13 @@ cipher_update(Context, Input) ->
   NewOutput = unpadding_output(Padding, Output),
   {NewContext, NewOutput}.
 
-do_block_cipher(#cfb_context{type=encrypt, cipher = Cipher, iv = IV, key = Key}, Input)->
+%%%===================================================================
+%%% Internal functions
+%%%===================================================================
+
+do_block_cipher(#cfb_context{type = encrypt, cipher = Cipher, iv = IV, key = Key}, Input) ->
   crypto:block_encrypt(Cipher, Key, IV, Input);
-do_block_cipher(#cfb_context{type=decrypt, cipher = Cipher, iv = IV, key = Key}, Input)->
+do_block_cipher(#cfb_context{type = decrypt, cipher = Cipher, iv = IV, key = Key}, Input) ->
   crypto:block_decrypt(Cipher, Key, IV, Input).
 
 padding_input(#cfb_context{block_offset = 0}, Input) ->
@@ -74,7 +83,63 @@ update_context(#cfb_context{block_size = BlockSize} = Context, Input, Output) ->
       end
   end.
 
-extract_iv(Output, OutputSize, BlockSize, RemainSize)->
+extract_iv(Output, OutputSize, BlockSize, RemainSize) ->
   HeadSize = OutputSize - BlockSize - RemainSize,
   <<_:(HeadSize)/bitstring, IV:(BlockSize)/bitstring, _:(RemainSize)/bitstring>> = Output,
   IV.
+
+
+%%%===================================================================
+%%% Test cases
+%%%===================================================================
+
+cipher_test_() ->
+  {timeout, 40, fun() -> test_cipher() end}.
+
+test_cipher() ->
+  TestCases = [
+    {aes_cfb128, 128, 128},
+    {aes_cfb128, 128, 192},
+    {aes_cfb128, 128, 256},
+    {blowfish_cfb64, 64, 128},
+    {blowfish_cfb64, 64, 192},
+    {blowfish_cfb64, 64, 256},
+    {blowfish_cfb64, 64, 448}
+  ],
+  [[test_cipher(Cipher, BlockSize, KeySize) || _ <- lists:seq(1, 500)]
+    || {Cipher, BlockSize, KeySize} <- TestCases],
+  ok.
+
+test_cipher(Cipher, BlockSize, KeySize) ->
+  test_cipher(encrypt, Cipher, BlockSize, KeySize),
+  test_cipher(decrypt, Cipher, BlockSize, KeySize),
+  ok.
+
+test_cipher(Type, Cipher, BlockSize, KeySize) ->
+  Key = crypto:strong_rand_bytes(KeySize div 8),
+  IV = crypto:strong_rand_bytes(BlockSize div 8),
+  Context = init_context(Cipher, Type, BlockSize, Key, IV),
+
+  BlockCount = rand:uniform(1000) + 1000, % 1001 ~ 2000 blocks
+  InputSize = BlockCount * BlockSize,
+
+  TestData = crypto:strong_rand_bytes(InputSize div 8),
+
+  BlockOutput = case Type of
+                  encrypt -> crypto:block_encrypt(Cipher, Key, IV, TestData);
+                  decrypt -> crypto:block_decrypt(Cipher, Key, IV, TestData)
+                end,
+
+  StreamOutput = test_stream_cipher(Context, TestData, InputSize div 8, <<>>),
+
+  BlockOutput =:= StreamOutput.
+
+test_stream_cipher(_, _, 0, Output) ->
+  Output;
+test_stream_cipher(Context, RemainData, RemainLen, Output) ->
+  ThisLen = rand:uniform(RemainLen),
+  <<ThisData:ThisLen/bytes, NextRemain/bytes>> = RemainData,
+  {NewContext, ThisOutput} = cipher_update(Context, ThisData),
+  NewOutput = <<Output/binary, ThisOutput/binary>>,
+
+  test_stream_cipher(NewContext, NextRemain, RemainLen - ThisLen, NewOutput).
