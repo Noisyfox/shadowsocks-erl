@@ -21,8 +21,8 @@
   client_sock,
   target_sock = undefined,
 
-  from_stage = init, % from_stage = init | obfs | cipher | protocol | proxy | closed
-  to_stage = init, % to_stage = init | obfs | cipher | protocol | proxy | closed
+  client_stage = init, % client_stage = init | running | closed
+  target_stage = init, % target_stage = init | running | closed
 
   module_obfs = obfs_plain,
   module_cipher = cipher_aes,
@@ -67,7 +67,7 @@ handle_cast(_Msg, State) ->
   {noreply, State}.
 
 % init trigger
-handle_info(timeout, #state{from_stage = init, client_sock = ClientSocket} = State) ->
+handle_info(timeout, #state{client_stage = init, client_sock = ClientSocket} = State) ->
 
   #state{
     module_cipher = ModuleCipher,
@@ -78,14 +78,14 @@ handle_info(timeout, #state{from_stage = init, client_sock = ClientSocket} = Sta
     stage_protocol = StageProtocol
   } = State,
 
-  {ok, ObfsState} = ModuleCipher:init(server),
-  {ok, CipherState} = ModuleObfs:init(server),
+  {ok, ObfsState} = ModuleObfs:init(server),
+  {ok, CipherState} = ModuleCipher:init(server),
   {ok, ProtocolState} = ModuleProtocol:init(server),
 
   inet:setopts(ClientSocket, [{active, once}]),
 
   {noreply, State#state{
-    from_stage = obfs,
+    client_stage = running,
     stage_obfs = StageObfs#stage_state{state = ObfsState},
     stage_cipher = StageCipher#stage_state{state = CipherState},
     stage_protocol = StageProtocol#stage_state{state = ProtocolState}
@@ -97,11 +97,11 @@ handle_info(timeout, State) ->
 
 %% Receive from client
 handle_info({tcp, ClientSocket, Data}, #state{client_sock = ClientSocket} = State) ->
-  io:format("Recv from client: ~w~n", [Data]),
+  % io:format("Recv from client: ~w~n", [Data]),
 
   Result = run_stage(Data, from, State),
 
-  io:format("Result: ~w~n", [Result]),
+  % io:format("Result: ~w~n", [Result]),
 
   case Result of
     {ok, ProxyData, NewState} ->
@@ -118,11 +118,11 @@ handle_info({tcp, ClientSocket, Data}, #state{client_sock = ClientSocket} = Stat
 
 %% Receive from target
 handle_info({tcp, TargetSocket, Data}, #state{target_sock = TargetSocket} = State) ->
-  io:format("Recv from target: ~w~n", [Data]),
+  % io:format("Recv from target: ~w~n", [Data]),
 
   Result = run_stage(Data, to, State),
 
-  io:format("Result: ~w~n", [Result]),
+  % io:format("Result: ~w~n", [Result]),
 
   case Result of
     {ok, ReplyData, NewState} ->
@@ -137,18 +137,17 @@ handle_info({tcp, TargetSocket, Data}, #state{target_sock = TargetSocket} = Stat
       {noreply, NewState}
   end;
 
-%% Client socket closed
 handle_info({tcp_closed, ClientSocket}, #state{client_sock = ClientSocket} = State) ->
-  io:format("Client socket closed~n", []),
-  {noreply, State};
-
-%% Target socket closed
+  handle_tcp_closed(ClientSocket, State);
 handle_info({tcp_closed, TargetSocket}, #state{target_sock = TargetSocket} = State) ->
-  io:format("Target socket closed~n", []),
-  {noreply, State};
+  handle_tcp_closed(TargetSocket, State);
+handle_info({tcp_closed, ClientSocket, _}, #state{client_sock = ClientSocket} = State) ->
+  handle_tcp_closed(ClientSocket, State);
+handle_info({tcp_closed, TargetSocket, _}, #state{target_sock = TargetSocket} = State) ->
+  handle_tcp_closed(TargetSocket, State);
 
 handle_info(Info, #state{client_sock = ClientSocket} = State) ->
-  io:format("~w", [Info]),
+  io:format("~w~n", [Info]),
   inet:setopts(ClientSocket, [{active, once}]),
   {noreply, State}.
 
@@ -254,14 +253,26 @@ handle_proxy_send(Data, #state{target_sock = undefined} = State) ->
 
   {ok, Socket} = gen_tcp:connect(Addr, Port, OptsTCP),
 
-  handle_proxy_send(Remaining, State#state{target_sock = Socket});
+  handle_proxy_send(Remaining, State#state{target_sock = Socket, target_stage = running});
+handle_proxy_send(_, #state{target_sock = closed} = State)->
+  {ok, State};
 handle_proxy_send(Data, #state{target_sock = TargetSock} = State) ->
-  ok = gen_tcp:send(TargetSock, Data),
-  {ok, State}.
+  case gen_tcp:send(TargetSock, Data) of
+    ok -> {ok, State};
+    {error, closed} ->
+      gen_server:cast(self(), {tcp_closed, TargetSock}),
+      {ok, State#state{target_stage = closed}}
+  end.
 
+handle_reply(_, #state{client_stage = closed} = State)->
+  {ok, State};
 handle_reply(Data, #state{client_sock = Socket} = State) ->
-  ok = gen_tcp:send(Socket, Data),
-  {ok, State}.
+  case gen_tcp:send(Socket, Data) of
+    ok -> {ok, State};
+    {error, closed} ->
+      gen_server:cast(self(), {tcp_closed, Socket}),
+      {ok, State#state{client_stage = closed}}
+  end.
 
 parse_address(<<1, Addr:4/bytes, Port:16/unsigned, Remaining/bytes>>) -> % ATYP = 1
   {binary_utils:bin_to_ipv4(Addr), Port, Remaining};
@@ -269,3 +280,19 @@ parse_address(<<3, Len/unsigned, Addr:(Len)/bytes, Port:16/unsigned, Remaining/b
   {binary_to_list(Addr), Port, Remaining};
 parse_address(<<4, Addr:16/bytes, Port:16/unsigned, Remaining/bytes>>) -> % ATYP = 4
   {binary_utils:bin_to_ipv6(Addr), Port, Remaining}.
+
+handle_tcp_closed(ClientSocket, #state{client_sock = ClientSocket, target_stage = TargetStage} = State) ->
+  io:format("Client socket closed~n", []),
+
+  case TargetStage of
+    running -> {noreply, State#state{client_stage = closed}};
+    _ -> {stop, normal, State#state{client_stage = closed}}
+  end;
+handle_tcp_closed(TargetSocket, #state{target_sock = TargetSocket, client_stage = ClientStage} = State) ->
+  io:format("Target socket closed~n", []),
+
+  case ClientStage of
+    running -> {noreply, State#state{target_sock = closed}};
+    _ -> {stop, normal, State#state{target_sock = closed}}
+  end.
+
