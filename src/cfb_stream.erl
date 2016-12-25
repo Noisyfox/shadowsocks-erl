@@ -35,8 +35,8 @@ init_context(Cipher, Type, BlockSize, Key, IV)
 
 cipher_update(Context, Input) ->
   {Padding, PaddingInput} = padding_input(Context, Input),
-  Output = do_block_cipher(Context, PaddingInput),
-  NewContext = update_context(Context, Input, Output),
+  {Output, CipherText} = do_block_cipher(Context, PaddingInput),
+  NewContext = update_context(Context, Input, Output, CipherText),
   NewOutput = unpadding_output(Padding, Output),
   {NewContext, NewOutput}.
 
@@ -45,9 +45,10 @@ cipher_update(Context, Input) ->
 %%%===================================================================
 
 do_block_cipher(#cfb_context{type = encrypt, cipher = Cipher, iv = IV, key = Key}, Input) ->
-  crypto:block_encrypt(Cipher, Key, IV, Input);
+  CipherText = crypto:block_encrypt(Cipher, Key, IV, Input),
+  {CipherText, CipherText};
 do_block_cipher(#cfb_context{type = decrypt, cipher = Cipher, iv = IV, key = Key}, Input) ->
-  crypto:block_decrypt(Cipher, Key, IV, Input).
+  {crypto:block_decrypt(Cipher, Key, IV, Input), iolist_to_binary(Input)}.
 
 padding_input(#cfb_context{block_offset = 0}, Input) ->
   {0, Input};
@@ -60,7 +61,7 @@ unpadding_output(Padding, Output) ->
   <<_:Padding/bitstring, NewOutput/bitstring>> = Output,
   NewOutput.
 
-update_context(#cfb_context{block_size = BlockSize} = Context, Input, Output) ->
+update_context(#cfb_context{block_size = BlockSize} = Context, Input, Output, CipherText) ->
   BlockedSize = bit_size(Output),
   if
     BlockedSize < BlockSize -> % no need to update iv, just update last_block
@@ -71,21 +72,21 @@ update_context(#cfb_context{block_size = BlockSize} = Context, Input, Output) ->
       RemainSize = BlockedSize rem BlockSize,
       case RemainSize of
         0 ->
-          NewIV = extract_iv(Output, BlockedSize, BlockSize, 0),
+          NewIV = extract_iv(CipherText, BlockedSize, BlockSize, 0),
           Context#cfb_context{iv = NewIV, block_offset = 0, last_block = []};
         _ ->
           FlatInput = iolist_to_binary(Input),
           #cfb_context{block_offset = OldOffset} = Context,
           HeadSize = BlockedSize - OldOffset - RemainSize,
           <<_:(HeadSize)/bitstring, NewLastBlock/bitstring>> = FlatInput,
-          NewIV = extract_iv(Output, BlockedSize, BlockSize, RemainSize),
+          NewIV = extract_iv(CipherText, BlockedSize, BlockSize, RemainSize),
           Context#cfb_context{iv = NewIV, block_offset = RemainSize, last_block = NewLastBlock}
       end
   end.
 
-extract_iv(Output, OutputSize, BlockSize, RemainSize) ->
-  HeadSize = OutputSize - BlockSize - RemainSize,
-  <<_:(HeadSize)/bitstring, IV:(BlockSize)/bitstring, _:(RemainSize)/bitstring>> = Output,
+extract_iv(CipherText, CipherTextSize, BlockSize, RemainSize) ->
+  HeadSize = CipherTextSize - BlockSize - RemainSize,
+  <<_:(HeadSize)/bitstring, IV:(BlockSize)/bitstring, _:(RemainSize)/bitstring>> = CipherText,
   IV.
 
 
@@ -132,7 +133,7 @@ test_cipher(Type, Cipher, BlockSize, KeySize) ->
 
   StreamOutput = test_stream_cipher(Context, TestData, InputSize div 8, <<>>),
 
-  BlockOutput =:= StreamOutput.
+  BlockOutput = StreamOutput.
 
 test_stream_cipher(_, _, 0, Output) ->
   Output;
